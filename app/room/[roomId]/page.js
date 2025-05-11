@@ -9,8 +9,10 @@ export default function Room() {
     const params = useParams();
     const roomId = params.roomId;
     const myVideo = useRef(null);
+    const peerVideo = useRef(null);
     const [isMuted, setIsMuted] = useState(true);
     const [isVideoOff, setIsVideoOff] = useState(false);
+    const [isRoomFull, setIsRoomFull] = useState(false);
     const [participants, setParticipants] = useState(1);
     const [roomLink, setRoomLink] = useState('');
 
@@ -31,24 +33,35 @@ export default function Room() {
             myStream = stream;
             if (myVideo.current) {
                 myVideo.current.srcObject = stream;
-                myVideo.current.play();
             }
 
             myPeer.on('call', call => {
+                if (participants > 2) {
+                    return; // Reject additional connections
+                }
                 call.answer(stream);
-                const video = document.createElement('video');
                 call.on('stream', userVideoStream => {
-                    addVideoStream(video, userVideoStream);
-                    setParticipants(prev => prev + 1);
+                    if (peerVideo.current) {
+                        peerVideo.current.srcObject = userVideoStream;
+                        setParticipants(2);
+                    }
                 });
             });
 
             socket.on('user-connected', userId => {
-                connectToNewUser(userId, stream);
+                if (participants < 2) {
+                    connectToNewUser(userId, stream);
+                } else {
+                    setIsRoomFull(true);
+                }
             });
 
             socket.on('user-disconnected', () => {
-                setParticipants(prev => Math.max(1, prev - 1));
+                if (peerVideo.current) {
+                    peerVideo.current.srcObject = null;
+                }
+                setParticipants(1);
+                setIsRoomFull(false);
             });
         });
 
@@ -58,23 +71,18 @@ export default function Room() {
 
         const connectToNewUser = (userId, stream) => {
             const call = myPeer.call(userId, stream);
-            const video = document.createElement('video');
             call.on('stream', userVideoStream => {
-                addVideoStream(video, userVideoStream);
-                setParticipants(prev => prev + 1);
+                if (peerVideo.current) {
+                    peerVideo.current.srcObject = userVideoStream;
+                    setParticipants(2);
+                }
             });
             call.on('close', () => {
-                video.remove();
-                setParticipants(prev => Math.max(1, prev - 1));
+                if (peerVideo.current) {
+                    peerVideo.current.srcObject = null;
+                }
+                setParticipants(1);
             });
-        };
-
-        const addVideoStream = (video, stream) => {
-            video.srcObject = stream;
-            video.addEventListener('loadedmetadata', () => {
-                video.play();
-            });
-            videoGrid.current?.appendChild(video);
         };
 
         return () => {
@@ -84,7 +92,7 @@ export default function Room() {
             socket.disconnect();
             myPeer.destroy();
         };
-    }, [roomId]);
+    }, [roomId, participants]);
 
     const toggleAudio = () => {
         const videoStream = myVideo.current.srcObject;
@@ -111,7 +119,9 @@ export default function Room() {
                 <div className="flex justify-between items-center mb-6">
                     <h1 className="text-2xl font-bold text-white">Room: {roomId}</h1>
                     <div className="flex items-center space-x-4">
-                        <span className="text-white">Participants: {participants}</span>
+                        <span className="text-white">
+                            {isRoomFull ? 'Room is full' : `Participants: ${participants}/2`}
+                        </span>
                         <button 
                             onClick={copyRoomLink}
                             className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
@@ -121,7 +131,7 @@ export default function Room() {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4" ref={videoGrid}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="relative">
                         <video 
                             ref={myVideo} 
@@ -144,6 +154,19 @@ export default function Room() {
                                 {isVideoOff ? '📵' : '📹'}
                             </button>
                         </div>
+                    </div>
+                    <div className="relative">
+                        <video 
+                            ref={peerVideo}
+                            className="w-full bg-black rounded-lg"
+                            autoPlay
+                            playsInline
+                        />
+                        {participants === 1 && (
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <p className="text-white text-lg">Waiting for peer to join...</p>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
